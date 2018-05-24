@@ -1,0 +1,110 @@
+// TODO
+//  - explicit paren AST node allows parsing both tuples, commas,
+//    and funcalls without knowing ahead of time which is which
+//  - more extensible operator precedence table, decoupled from the tokens,
+//    able to modify from within?
+//  - prefix operator use: `use comma 'tuple'`
+//  - semicolon operator?
+//  - some sort of import?  - will have everything built in, but need to import
+//    for scope
+//  - units: `use units` and then ~ and @ brought into scope:
+//    1~cm^2/s @ m^2/s
+//    pragmas `use units 'cgs'` vs 'si'?
+//    implicit multiplication?
+//    lazy evaluation helps here since ~ and @ will not eval RHS
+//    allow _ instead of ~ - breaks separator pragma?
+//  - calculus, statistics, graphs, etc?
+
+
+
+
+------
+
+
+/** @const {!Visitor<!State, *>} */
+Visitor.EVALUATE = new Visitor('evaluate', () => {});
+Visitor.evaluate = Visitor.EVALUATE.symbol;
+
+
+PLUS = new class extends Operator.infixl(10, '+') {
+
+  [Visitor.evaluate](left, right) {
+    return left.visit() + right.visit();
+  }
+
+  [Visitor.differentiate]()
+}
+
+
+PLUS.tree : function(new: Tree, !Tree, !Tree)
+PLUS.parser : Parser
+
+Always go thru Tree.prototype.visit, but then Visitor.delegate
+can look at another object for symbols - no need to copy...
+
+
+
+PLUS = new class extends Operator.Infixl {
+  constructor() { super(10, '+'); }
+
+  get precedence() { return 10; }
+  get name() { return '+'; }
+
+  [Visitor.evaluate](left, right) {
+    return left.visit() + right.visit();
+  }
+}(10, '+');
+
+
+To bake the constructor args in or not?
+ - con: unnecessary use of mixin
+ - pro: eliminates a LOT of boilerplate, harder to misuse
+ - shouldn't actually mess up any type checking
+
+Operator.infixl returns function(new: Operator.Binary) with no args
+shouldn't need any class-side inheritance or funny statics at that point
+
+-----
+
+what about units?  where does the lattice come into Visitor.evaluate?
+  - maybe a nested version?
+  - maybe hardcode a chain in evaluate?
+
+evaluate() {
+  // may not want to evaluate all children...
+  // but we still want a nice way to delegate through tree vs unit vs number
+}
+
+BUT... default evaluate unwraps and falls through to tree, then unit, then number...
+ - three basic ways to handle units: (1) retain, (2) fail, (3) custom
+
+[Visitor.evaluate](left, right) {
+  Visitor.EVALUATE_UNWRAPPED.visit(left.visit(), right.visit())
+}
+[Visitor.evaluateUnwrapped](left, right) {
+  if (left instanceof Tree || right instanceof Tree) {
+    return new this(wrapToTree(left), wrapToTree(right));
+  }
+  return Visitor.EVALUATE_VALUE.visit(left, right);
+}
+[Visitor.evaluateValue](left, right) {
+  if (left instanceof Dimension || right instanceof Dimension) {
+    
+  }
+}
+
+
+
+OR...
+
+visitValues({
+  tree(left, right) {
+
+  },
+  dimension(left, right) {
+
+  },
+  number(left, right) {
+
+  },
+}, left, right);

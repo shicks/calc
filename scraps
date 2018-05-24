@@ -1,0 +1,41 @@
+operator
+
+
+  /**
+   * @param {number} precedence
+   * @param {string} name
+   * @return {function(new: Operator.Binary)}
+   */
+  static infixl(precedence, name) {
+    return class extends Operator.Binary {
+      constructor() { super(precedence, 1, ); }
+
+
+      static get Tree() {
+
+        // How to copy the visitors?  How to know that a given symbol key
+        // is in fact a visitor symbol?  We could have HANDLER register
+        // itself somewhere?
+
+        const tree = class extends Tree.Binary {}
+
+        // Copy all visitor handlers over.
+        for (const {symbol, visitor, handler}
+             of Visitor.getHandlers(this.prototype)) {
+          tree.prototype[symbol] =
+            (...args) => handler.call(
+              null,
+              visitor.wrap(left, args),
+              visitor.wrap(right, args),
+              ...args)
+        }
+
+
+        Object.defineProperties(this, {Tree: {get() { return tree; }}});
+        return tree;
+      }
+
+    }
+
+  }
+

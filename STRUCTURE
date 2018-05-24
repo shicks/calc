@@ -1,0 +1,26 @@
+# Basic structure
+
+## class Calculator
+
+Capable of installing/removing modules, maintaining bindings, and
+parse/eval.  Handles multiple different types.
+
+## class Tree
+
+Internal AST produced by calculator parsing, but not eval.  Will be
+needed to handle symbolic representation of algebraic expressions,
+so that macros can manipulate them without evaluating.
+
+Tree has many subclasses: Unary, Binary, Variadic (all of which fix the number of arguments statically).  Trees should be able to stringify themselves, which means they need to know their own name, precedence level, etc.
+
+## class Operator
+
+During parsing we have both a Tree stack (for values) but we also need a separate stack for not-yet-evaluated operators.  This stack needs elements to have precedence/assoc stored so that tighter ops can execute when necessary.  Each operator instance needs its own Tree class.  We generate this automatically (which is likely to confuse Closure).
+
+## class Parser
+
+Parser needs to know value/operator, name/regex, and to generate either a Tree or an Operator.  Operators might as well implement Parser.
+
+## class Func
+
+Callable functions are basically like operators, but they don't ever go on the operator stack, and can all be parsed like values.  They only need their own Tree class (like Operator) and name, but not the rest of the parser.
