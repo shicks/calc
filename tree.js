@@ -28,6 +28,15 @@ Tree.Value = class extends Tree {
     this.value = value;
   }
 
+  // TODO(sdh): This boilerplate get repeated over and over again - can we reduce it?
+  //  - the issue is in whether it's wrapped, and whether a delegate is used,
+  //    but also in handling the varargs vs array destructuring?
+  //  - we could move the arg first, or else just always pass an array?
+  //  - as it is, we can't use @override on the implementations...
+  //    alternatively, just don't use a symbol - then we're back to ordinary methods.
+  //    if we just define a common interface for Tree and Operator to implement,
+  //    with optional methods, then it should be fine???
+
   /**
    * @param {!Visitor<P, R>} visitor
    * @param {P} arg
@@ -105,9 +114,14 @@ Tree.Name = class extends Tree {
 
 /** @abstract */
 Tree.Unary = class extends Tree {
-  /** @param {!Tree} arg */
-  constructor(arg) {
+  /**
+   * @param {!Tree} arg
+   * @param {!Operator.Unary} op
+   */
+  constructor(arg, op) {
     super([arg]);
+    /** @const */
+    this.op = op;
   }
 
   /**
@@ -131,9 +145,12 @@ Tree.Binary = class extends Tree {
   /**
    * @param {!Tree} left
    * @param {!Tree} right
+   * @param {!Operator.Binary} op
    */
   constructor(left, right) {
     super([left, right]);
+    /** @const */
+    this.op = op;
   }
 
   /**

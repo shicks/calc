@@ -1,8 +1,17 @@
 const {Module} = require('./module');
-const {Parser} = require('./parser');
 const {Operator} = require('./operator');
+const {Parser} = require('./parser');
+const {Precedence} = require('./precedence');
+const {Visitor} = require('./visitor');
 
-class Plus extends Operator.infixl(10, '+') {
+const PLUS = new class extends Operator.Binary {
+  constructor() { super(Precedence.ADDITION, '+'); }
+
+  [Visitor.evaluate](left, right) {
+    return left.visit() + right.visit();
+  }
+
+
 
   operate(left, right) {
     // TODO(sdh): consider breaking this out with a sort of

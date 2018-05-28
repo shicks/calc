@@ -193,6 +193,36 @@ Operator.Binary = class extends Operator {
 };
 
 
+Operator.Binary.WithUnits = class extends Operator.Binary {
+  /**
+   * @param {!Dimension.Unit} left
+   * @param {!Dimension.Unit} right
+   * @return {!Dimension.Unit}
+   * @abstract
+   */
+  operateUnits(left, right) {}
+
+  /**
+   * @param {number} left
+   * @param {number} right
+   * @return {number}
+   * @abstract
+   */
+  operate(left, right) {}
+
+  [Visitor.evaluate](left, right) {
+    left = left.visit();
+    right = right.visit();
+    if (left instanceof Dimension || right instanceof Dimension) {
+      const unit = operateUnits(Dimension.unit(left), Dimension.unit(right));
+      const value = operate(Dimension.value(left), Dimension.value(right));
+      return Dimension.of(value, unit);
+    }
+    return operate(left, right);
+  }
+}
+
+
 Operator.Variadic = class extends Operator.Binary {
   /**
    * @param {number} precedence

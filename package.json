@@ -1,0 +1,23 @@
+{
+  "name": "calc",
+  "version": "1.0.0",
+  "description": "High precision numeric and symbolic mathematics.",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha *_test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shicks/calc.git"
+  },
+  "author": "Stephen Hicks <stephenhicks@gmail.com>",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/shicks/calc/issues"
+  },
+  "homepage": "https://github.com/shicks/calc#readme",
+  "devDependencies": {
+    "chai": "^4.1.2",
+    "mocha": "^5.2.0"
+  }
+}
