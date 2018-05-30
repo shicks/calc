@@ -42,7 +42,7 @@ class Long extends Uint32Array {
 //     const low = i[0];
 // console.log('sign = ' + sign + ', exponent = ' + exponent + ', high = ' + high.toString(16) + ', low = '+ low.toString(16));
 // const r=/*
-//     return/**/ Long.of(low, high).shiftLeft(exponent - 52);
+//     return/**/ Long.of(low, high).shl(exponent - 52);
 // console.log(' => '+r.toDebugString());return r;
 
     let high = ((i[1] & 0xfffff) | 0x100000) >>> 0;
@@ -52,7 +52,7 @@ class Long extends Uint32Array {
       high = ~high;
       if (low == 0) ++high;
     }
-    return Long.of(low, high).shiftLeft(exponent - 52);
+    return Long.of(low, high).shl(exponent - 52);
 
     // let result = Long.of(low, high);
     // // TODO(sdh): how to avoid the extra negate operation? doesn't seem
@@ -61,7 +61,7 @@ class Long extends Uint32Array {
     //   // negate by hand
       
     // }
-    // return result.shiftLeft(exponent - 52);
+    // return result.shl(exponent - 52);
   }
 
   /** @override */
@@ -73,8 +73,12 @@ class Long extends Uint32Array {
       return result;
     } else {
       // use slice instead
-      Long.prototype.subarray = Uint32Array.prototype.slice;
-      return this.slice(start, end);
+      Long.prototype.subarray = function(start, end) {
+        start = Math.min(Math.max(start, 0), this.length);
+        end = Math.max(Math.min(end, this.length), start);
+        return new Long(this.buffer, this.byteOffset + 4 * start, end - start);
+      };
+      return this.subarray(start, end);
     }
   }
 
@@ -119,7 +123,7 @@ class Long extends Uint32Array {
         this.signBit() && 0xffffffff;
   }
 
-  shiftLeft(bits) {
+  shl(bits) {
     bits = Number(bits);
     const lowOffset = bits & 31;
     const highOffset = bits >>> 5;
@@ -141,7 +145,7 @@ class Long extends Uint32Array {
     return out;
   }
 
-  shiftRight(bits) {
+  shr(bits) {
     bits = Number(bits);
     const lowOffset = bits & 31;
     const highOffset = bits >>> 5;
@@ -163,7 +167,21 @@ class Long extends Uint32Array {
     return out;
   }
 
+
+  /**
+   * @return {!Long}
+   */
+  cpl() {
+    return this.map(x => ~x);
+  }
+
+
+  /**
+   * @param {!Long|number} that
+   * @return {!Long|number}
+   */
   bitOr(that) {
+    that = Long.make(that);
     const words = Math.max(this.length, that.length);
     const out = new Long(words);
     for (let i = 0; i < words; i++) {
@@ -177,7 +195,37 @@ class Long extends Uint32Array {
    * @param {!Long|number} that
    * @return {!Long|number}
    */
-  plus(that) {
+  bitAnd(that) {
+    that = Long.make(that);
+    const words = Math.max(this.length, that.length);
+    const out = new Long(words);
+    for (let i = 0; i < words; i++) {
+      out[i] = this.get(i) & that.get(i);
+    }
+    return out.trim();
+  }
+
+
+  /**
+   * @param {!Long|number} that
+   * @return {!Long|number}
+   */
+  bitXor(that) {
+    that = Long.make(that);
+    const words = Math.max(this.length, that.length);
+    const out = new Long(words);
+    for (let i = 0; i < words; i++) {
+      out[i] = this.get(i) ^ that.get(i);
+    }
+    return out.trim();
+  }
+
+
+  /**
+   * @param {!Long|number} that
+   * @return {!Long|number}
+   */
+  add(that) {
     // if (typeof left == 'number' && typeof right == 'number') {
     //   const result = left + right;
     //   if (Number.isSafeInteger(result)) return result;
@@ -194,23 +242,25 @@ class Long extends Uint32Array {
     return out.trim();
   }
 
-  minus(that) {
-    // TODO - handle long RHS
-    return this.plus(-that);
-  }
-
-  /**
-   * @return {!Long}
-   */
-  complement() {
-    return this.map(x => ~x);
+  sub(that) {
+    that = Long.make(that);
+    const out = new Long(Math.max(this.length, that.length) + 1);
+    let carry = 0;
+    let i = 0;
+    while (i < out.length) {
+      let word = -that.get(i);
+      const x = this.get(i) + word + carry;
+      out[i++] = x;
+      carry = Math.floor(x / 0x100000000);
+    }
+    return out.trim();
   }
 
   /**
    * @return {!Long|number}
    */
-  negate() {
-    return this.complement().plus(1);
+  neg() {
+    return this.cpl().add(1);
   }
 
   divRem(/** number */ div) {
@@ -235,17 +285,14 @@ class Long extends Uint32Array {
   // }
 
 
-  static multiply(left, right) {
-    if (typeof left == 'number' && typeof right == 'number') {
-      const result = left * right;
-      if (Number.isSafeInteger(result)) return result;
-    }
-    left = Long.make(left);
-    right = Long.make(right);
-
-console.log('left = '+left.toDebugString() +', right='+right.toDebugString());
-
-    const out = new Long(left.length + right.length + 1);
+  mul(that) {
+    // if (typeof left == 'number' && typeof right == 'number') {
+    //   const result = left * right;
+    //   if (Number.isSafeInteger(result)) return result;
+    // }
+    that = Long.make(that);
+    const out =
+        new Long(Math.ceil((this.bitCount() + that.bitCount() + 1) / 32));
     let carry = 0;
     let i = 0;
     while (i < out.length) {
@@ -254,23 +301,23 @@ console.log('left = '+left.toDebugString() +', right='+right.toDebugString());
       carry = 0;
       const start = 0;//Math.max(0, i - right.length); // i - j < right.length
       const end = i;//Math.min(i, left.length); // j < left.length
-      for (let j = start; j < end; j++) {
-        const leftTerm = left.get(j);
-        const rightTerm = right.get(i - j);
+      for (let j = start; j <= end; j++) {
+        const leftTerm = this.get(j);
+        const rightTerm = that.get(i - j);
         const leftUpper = leftTerm >>> 16;
         const rightUpper = rightTerm >>> 16;
         const leftLower = leftTerm & 0xffff;
         const rightLower = rightTerm & 0xffff;
-        x += leftLower * rightLower;
-        const mid = leftLower * rightUpper + rightUpper * leftLower;
-        carry += mid >>> 16;
-        x += mid & 0xffff;
+        x += leftLower * rightLower >>> 0;
+        const mid = leftLower * rightUpper + rightLower * leftUpper;
+        carry += (mid >>> 16);
+        x += ((mid & 0xffff) << 16) >>> 0;
         carry += leftUpper * rightUpper;
       }
       carry += Math.floor(x / 0x100000000);
       out[i++] = x;
     }
-    return out; //.trim();
+    return out.trim();
   }
 
 
