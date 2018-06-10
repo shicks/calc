@@ -2,62 +2,62 @@ const {Long} = require('./long');
 const {expect} = require('chai');
 
 const NUMBERS = [
+  Long.make(-(2 ** 256)).sub(2 ** 16),
+  Long.make(-(2 ** 256)).sub(1),
+  Long.make(-(2 ** 256)),
+  Long.make(-(2 ** 256)).add(1),
+  Long.make(-(2 ** 256)).add(2 ** 16),
+  -(2 ** 64) - (2 ** 16),
+  Long.make(-(2 ** 64)).sub(1),
+  -(2 ** 64),
+  Long.make(-(2 ** 64)).add(1),
+  -(2 ** 64) + (2 ** 16),
+  Long.make(-(2 ** 53)).sub(1),
+  -(2 ** 53),
+  -(2 ** 53) + 1,
+  -(2 ** 52) - 1,
+  -(2 ** 52),
+  -(2 ** 52) + 1,
+  -(2 ** 32) - 1,
+  -(2 ** 32),
+  -(2 ** 32) + 1,
+  -(2 ** 31) - 1,
+  -(2 ** 31),
+  -(2 ** 31) + 1,
+  -(2 ** 16) - 1,
+  -(2 ** 16),
+  -(2 ** 16) + 1,
+  -2,
+  -1,
   0,
   1,
   2,
   3,
-  -1,
-  -2,
   2 ** 16 - 1,
   2 ** 16,
   2 ** 16 + 1,
-  -(2 ** 16) + 1,
-  -(2 ** 16),
-  -(2 ** 16) - 1,
   2 ** 31 - 1,
   2 ** 31,
   2 ** 31 + 1,
-  -(2 ** 31) + 1,
-  -(2 ** 31),
-  -(2 ** 31) - 1,
   2 ** 32 - 1,
   2 ** 32,
   2 ** 32 + 1,
-  -(2 ** 32) + 1,
-  -(2 ** 32),
-  -(2 ** 32) - 1,
   2 ** 52 - 1,
   2 ** 52,
   2 ** 52 + 1,
-  -(2 ** 52) + 1,
-  -(2 ** 52),
-  -(2 ** 52) - 1,
   2 ** 53 - 1,
   2 ** 53,
-  -(2 ** 53),
-  -(2 ** 53) + 1,
   Long.make(2 ** 53).add(1),
-  Long.make(-(2 ** 53)).sub(1),
   2 ** 64 - 2 ** 16,
   Long.make(2 ** 64).sub(1),
   2 ** 64,
   Long.make(2 ** 64).add(1),
   2 ** 64 + 2 ** 16,
-  -(2 ** 64) + (2 ** 16),
-  Long.make(-(2 ** 64)).add(1),
-  -(2 ** 64),
-  Long.make(-(2 ** 64)).sub(1),
-  -(2 ** 64) - (2 ** 16),
   Long.make(2 ** 256).sub(2 ** 16),
   Long.make(2 ** 256).sub(1),
   Long.make(2 ** 256),
   Long.make(2 ** 256).add(1),
   Long.make(2 ** 256).add(2 ** 16),
-  Long.make(-(2 ** 256)).add(2 ** 16),
-  Long.make(-(2 ** 256)).add(1),
-  Long.make(-(2 ** 256)),
-  Long.make(-(2 ** 256)).sub(1),
-  Long.make(-(2 ** 256)).sub(2 ** 16),
 ];
 
 /* TODO - use these in tests
@@ -468,7 +468,7 @@ describe('Long.prototype.add', function() {
         .to.deep.equal(Long.of(0, 0x10000000));
   });
   it('should be the inverse of sub', function() {
-    this.slow(1000);
+    this.slow(500);
     for (const left of NUMBERS) {
       for (const right of NUMBERS) {
         const expected = Number.isSafeInteger(left) ? left : Long.make(left);
@@ -510,7 +510,7 @@ describe('Long.prototype.sub', function() {
         .to.equal(0xf01ffff2 | 0);
   });
   it('should be the inverse of add', function() {
-    this.slow(1000);
+    this.slow(500);
     for (const left of NUMBERS) {
       for (const right of NUMBERS) {
         const expected = Number.isSafeInteger(left) ? left : Long.make(left);
@@ -534,6 +534,53 @@ describe('Long.prototype.mul', function() {
     for (const n of NUMBERS) {
       expect(Long.make(n).mul(0)).to.equal(0);
       expect(Long.make(0).mul(n)).to.equal(0);
+    }
+  });
+});
+
+
+describe('Long.prototype.cmp', function() {
+  it('should return zero when comparing itself', function() {
+    for (const n of NUMBERS) {
+      expect(Long.make(n).cmp(Long.make(n))).to.equal(0);
+    }
+  });
+  it('should return positive when this > that', function() {
+    this.slow(500);
+    for (let i = 1; i < NUMBERS.length; i++) {
+      const left = Long.make(NUMBERS[i]);
+      for (let j = 0; j < i; j++) {
+        const right = Long.make(NUMBERS[j]);
+        expect(left.cmp(right)).to.be.above(0);
+      }
+    }
+  });
+  it('should return negative when this < that', function() {
+    this.slow(500);
+    for (let i = 1; i < NUMBERS.length; i++) {
+      const right = Long.make(NUMBERS[i]);
+      for (let j = 0; j < i; j++) {
+        const left = Long.make(NUMBERS[j]);
+        expect(left.cmp(right)).to.be.below(0);
+      }
+    }
+  });
+});
+
+
+describe('Long.prototype.divRem', function() {
+  // TODO FIXME - doesn't seem to work right now
+  // anyway, need proper division support, not just single digit
+  // though this should get us decent stringification
+  it('should be the inverse of mul and add', function() {
+    this.slow(500);
+    for (const right of NUMBERS) {
+      if (!Number.isSafeInteger(right)) continue;
+      for (const left of NUMBERS) {
+        const [quot, rem] = Long.make(left).divRem(right);
+        const expected = Long.make(Long.make(quot).mul(right)).add(rem);
+        expect(expected).to.deep.equal(left);
+      }
     }
   });
 });

@@ -274,7 +274,7 @@ class Long extends Uint32Array {
       quot[j++] = q;
       carry = t - q * div;
     }
-    return [quote.subarray(j).trim(), carry];
+    return [quot.subarray(j).trim(), carry];
   }
 
   // mul(/** number */ mul) {
@@ -320,6 +320,19 @@ class Long extends Uint32Array {
     return out.trim();
   }
 
+
+  cmp(that) {
+    const thisSign = this.signBit();
+    const signCmp = thisSign - that.signBit();
+    if (signCmp != 0) return signCmp;
+    const lenCmp = this.length - that.length;
+    if (lenCmp != 0) return thisSign ? -lenCmp : lenCmp;
+    for (let i = this.length - 1; i >= 0; i--) {
+      const cmp = this[i] - that[i];
+      if (cmp != 0) return cmp;
+    }
+    return 0;
+  }
 
   toDebugString() {
     return Array.from(this)
