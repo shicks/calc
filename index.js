@@ -42,8 +42,20 @@
 // console.log(x);
 
 
-const {Long} = require('./long');
+// const {Long} = require('./long');
 
-console.log(Long.make(0x3000000000).toDebugString());
-let x = Long.multiply(0x300000001, 0x400000002);
-console.log(Array.from(x).map(x=>x.toString(16).padStart(8, '0')));
+// console.log(Long.make(0x3000000000).toDebugString());
+// let x = Long.multiply(0x300000001, 0x400000002);
+// console.log(Array.from(x).map(x=>x.toString(16).padStart(8, '0')));
+
+// import {FOO} from './int.js';
+// console.log(FOO);
+
+const ints = require('./int.js');
+
+const n = ints.of(2);
+const m = ints.of(1024);
+console.log(ints.pow(n, m));
+
+// NOTE: it seems like node-10 actually supports native BigInt
+// Might as well just use it directly? save all the hassle?
