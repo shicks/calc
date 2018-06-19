@@ -1,36 +1,44 @@
 // Continued logarithms
 
+const {BitSet} = require('./bitset.js');
+
 /**
  * A continued logarithm.
  * @implements {Iterable<boolean>}
- * @abstract
  */
 class CL {
-  /** @param {!BitSet=} data */
-  constructor(data = undefined) {
+  /** @param {!Iterable<boolean>} data */
+  constructor(data) {
+    /** @type {?Iterator<boolean>} */
+    this.iter = data[Symbol.iterator]();
     /** @const */
-    this.bits = data ? data.clone() : new BitSet();
+    this.bits = new BitSet(); // TODO(sdh): allow passing in initial data?
+  }
+
+  [Symbol.iterator]() {
+    return this.skip(0);
   }
 
   /**
-   * @return {?boolean} null if at end
-   * @abstract
+   * @param {number} index
+   * @return {!IterableIterator<boolean>}
    */
-  generate() {}
-
-  /** @return {!IterableIterator<boolean>} */
-  [Symbol.iterator]() {
-    let i = 0;
-
+  skip(index) {
+    if (index < this.bits.size() && this.iter) this.get(index);
     return {
       [Symbol.iterator]() { return this; },
       next: () => {
-        let value =
-            i < this.terms.length ?
-                this.terms[i] :
-                (this.terms[i] = this.generate());
-        let done = value == null;
-        i++;
+        if (index++ < this.bits.size()) {
+          return {value: this.bits.get(index), done: false};
+        } else if (!this.iter) {
+          return {value: undefined, done: true};
+        }
+        const {value, done} = this.iter.next();
+        if (done) {
+          this.iter = null;
+        } else {
+          this.bits.add(value);
+        }
         return {value, done};
       },
     };
@@ -41,51 +49,74 @@ class CL {
    * @return {?boolean}
    */
   get(index) {
-    if (index >= this.terms.length) {
-      if (this.terms.length && this.terms[this.terms.length - 1] == null) {
-        return null;
-      }
-      do {
-        let next = this.generate();
-        this.terms.push(next);
-        if (next == null) return null;
-      } while (index >= terms.length);
+    let size = this.bits.size();
+    if (index < size) {
+      return this.bits.get(index);
+    } else if (!this.iter) {
+      return null;
     }
-    return this.terms[index];
+    let last = null;
+    while (size++ <= index) {
+      const {value, done} = this.iter.next();
+      if (done) {
+        this.iter = null;
+        break;
+      } else {
+        this.bits.add(last = value);
+      }
+    }
+    return last;
   }
 
   // only shows the currently computed terms
   toDebugString() {
-    // NOTE: toString changes as more terms are realized
-    let index = 0;
+    // NOTE: toDebugString changes as more terms are realized
     let parts = ['['];
-    while (index < this.terms.length) {
-      let term = this.terms[index];
-      if (term == null) {
-        parts.push(']');
-        return parts.join('');
-      }
+    const size = this.bits.size();
+    for (let index = 0; index < size; index++) {
+      let term = this.bits.get(index);
       parts.push(term ? '1' : '0');
-      index++;
     }
-    parts.push('...]');
+    if (this.iter) parts.push('...');
+    parts.push(']');
     return parts.join('');
   }
 
   toString(radix = 10, digits = 30) {
 //console.log('toString('+radix+', '+digits+')');
+    radix = BigInt(radix);
     let parts = []
-    let a = 1n;
+    let a = 0n;
     let b = 0n;
     let c = 0n;
     let d = 1n;
     let last = null;
     let next = null;
+    let index = 0;
 FOR:
     for (const e of this) {
 //console.log('a='+a+', b='+b+', c='+c+', d='+d+', e='+e);
-      [a, b, c, d] = [a * e + b, a, c * e + d, c];
-      while (c != 0 && d != 0) {
+      index++;
+      if (index == 1) {
+        a = e ? 1n : -1n;
+        continue;
+      } else if (index == 2) {
+        if (!e) [a, b, c, d] = [b, a, d, c];
+        continue;
+      }
+      if (e) {
+        if (!(b & 1n) && !(d & 1n)) {
+          b >>= 1n;
+          d >>= 1n;
+        } else {
+          a <<= 1n;
+          c <<= 1n;
+        }
+      } else {
+        [a, b, c, d] = [a + b, a, c + d, c];
+        // TODO(sdh): check for gcd? may never get one...
+      }
+      while (c != 0n && d != 0n) {
         last = b / d;
         next = a / c;
 //console.log('last='+last+', next='+next);
@@ -124,8 +155,28 @@ FOR:
     let d = 1n;
     let last = NaN;
     let next = NaN;
+    let index = 0;
     for (const e of this) {
-      [a, b, c, d] = [a * e + b, a, c * e + d, c];
+      index++;
+      if (index == 1) {
+        a = e ? 1n : -1n;
+        continue;
+      } else if (index == 2) {
+        [a, b, c, d] = [b, a, d, c];
+        continue;
+      }
+      if (e) {
+        if ((b & 1n) || (d & 1n)) {
+          b >>= 1n;
+          d >>= 1n;
+        } else {
+          a <<= 1n;
+          c <<= 1n;
+        }
+      } else {
+        [a, b, c, d] = [a + b, a, c + d , c];
+        // TODO(sdh): check for gcd? may never get one...
+      }
       if ((next = Number(a) / Number(c)) == last) {
         break;
       }
@@ -135,20 +186,104 @@ FOR:
   }
 
   static of(number) {
-    return new CF.OfNumber(number);
+    return new CL(function * () {
+      let index = 0;
+      if (number < 0) {
+//console.log('neg: 0');
+        yield 0;
+        number *= -1;
+      } else if (number > 0) {
+//console.log('pos: 1');
+        yield 1;
+      } else {
+//console.log('zero');
+        return;
+      }
+      if (number < 1) {
+//console.log('recip: 0');
+        yield 0;
+        number = 1 / number;
+      } else if (number > 1) {
+//console.log('normal: 1');
+        yield 1;
+      } else {
+//console.log('one');
+        return;
+      }
+      while (number != 1) { // && index++ < 100) {
+        if (number >= 2) {
+//console.log(`1: ${number} => ${number / 2}`);
+          yield 1;
+          number /= 2;
+        } else {
+//console.log(`0: ${number} => ${1 / (number - 1)}`);
+          yield 0;
+          number = 1 / (number - 1);
+        }
+      }
+//console.log('end');
+      yield 0; // ???
+    }());
+  }
+
+  static ofRat(num, den) {
+    num = BigInt(num);
+    den = BigInt(den);
+    return new CL(function * () {
+      if (num == 0n) {
+        return;
+      } else if (num < 0n && den < 0n) {
+        num *= -1n;
+        den *= -1n;
+        yield 1;
+      } else if (num < 0n) {
+        num *= -1n;
+        yield 0;
+      } else if (den < 0n) {
+        den *= -1n;
+        yield 0;
+      } else {
+        yield 1;
+      }
+      if (num == den) {
+        return;
+      } else if (num < den) {
+        [num, den] = [den, num];
+        yield 0;
+      } else {
+        yield 1;
+      }
+      while (num != den) {
+        if (num >= (den << 1n)) {
+          if (num & 1n) {
+            den <<= 1n;
+          } else {
+            num >>= 1n;
+          }
+          yield 1;
+        } else {
+          [num, den] = [den, num - den];
+          yield 0;
+        }
+      }
+      yield 0; // ???
+    }());
   }
 
   reciprocal() {
     const iter = this[Symbol.iterator]();
-    if (this.get(0) === 0n) {
-      iter.next();
-      return new CF.OfIterator(iter);
-    } else {
-      return new CF.OfIterator(function * () {
-        yield 0n;
-        yield * iter;
-      }());
-    }
+    return new CL(function * () {
+      let result = iter.next();
+      if (result.done) {
+        // ??? doesn't seem quite right
+        while (true) yield 1;
+      }
+      yield result.value;
+      result = iter.next();
+      if (result.done) return;
+      yield 1 - result.value;
+      yield * iter;
+    }());
   }
 }
 
@@ -309,11 +444,11 @@ radix = BigInt(radix);
     let terms = 0;
     while (num != 1 && terms++ < 64) {
       if (num >= 2) {
-console.log(`num: ${num} => 1`);
+//console.log(`num: ${num} => 1`);
         num /= 2;
         h.ingest(1);
       } else {
-console.log(`num: ${num} => 0`);
+//console.log(`num: ${num} => 0`);
         num = 1 / (num - 1);
         h.ingest(0);
       }
@@ -569,11 +704,11 @@ radix = BigInt(radix);
     let terms = 0;
     while (num != 1 && terms++ < 64) {
       if (num >= 2) {
-console.log(`num: ${num} => 1`);
+//console.log(`num: ${num} => 1`);
         num /= 2;
         h.ingest(1);
       } else {
-console.log(`num: ${num} => 0`);
+//console.log(`num: ${num} => 0`);
         num = 1 / (num - 1);
         h.ingest(0);
       }
@@ -593,15 +728,30 @@ console.log(`num: ${num} => 0`);
 
 module.exports = {CL, Homograph, Bihomograph};
 
+let x = CL.of(172.34);
+console.log(x.toDebugString());
+//console.log(Number(x));
+console.log(x.toString());
+console.log(x.toDebugString());
 
-const h = Homograph.ofRat(72 * 8 + 1, 8);
-console.log(String(h));
 
-while (h.next() != null) {
-  const next = h.next();
-  h.egest(next);
-  console.log('egest ' + next + ': ' + String(h));
-}
+// this convergent gets 27 digits of pi - last 3 printed are off
+x = CL.ofRat(1019514486099146n, 324521540032945n);
+console.log(x.toDebugString());
+//console.log(Number(x));
+console.log(x.toString());
+console.log(x.toDebugString());
+
+
+// const h = Homograph.ofRat(72 * 8 + 1, 8);
+// console.log(String(h));
+
+// while (h.next() != null) {
+//   const next = h.next();
+//   h.egest(next);
+//   console.log('egest ' + next + ': ' + String(h));
+// }
+
 
 
 // const radix = 10;

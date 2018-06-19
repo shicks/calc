@@ -1,7 +1,7 @@
 class BitSet {
   constructor(size = 0, data = undefined) {
     this.size_ = size;
-    const capacity = this.size || 64;
+    const capacity = size || 64;
     this.data_ = data ? data.slice() : new Uint8Array(capacity >>> 3);
   }
 
@@ -36,8 +36,9 @@ class BitSet {
   add(value) {
     const bit = this.size_++;
     const index = bit >>> 3;
-    if (index >= this.data_.size) {
-      const data = new Uint8Array(this.data_.size * 2);
+    let data = this.data_;
+    if (index >= this.data_.length) {
+      data = new Uint8Array(this.data_.length * 2);
       data.set(this.data_);
       this.data_ = data;
     }
