@@ -7,12 +7,17 @@ const {BitSet} = require('./bitset.js');
  * @implements {Iterable<boolean>}
  */
 class CL {
-  /** @param {!Iterable<boolean>} data */
-  constructor(data) {
+  /**
+   * @param {!Iterable<boolean|number|string>} data
+   * @param {boolean=} finite
+   */
+  constructor(data, finite = false) {
     /** @type {?Iterator<boolean>} */
     this.iter = data[Symbol.iterator]();
     /** @const */
     this.bits = new BitSet(); // TODO(sdh): allow passing in initial data?
+    /** @const */
+    this.finite = finite;
   }
 
   [Symbol.iterator]() {
@@ -33,7 +38,8 @@ class CL {
         } else if (!this.iter) {
           return {value: undefined, done: true};
         }
-        const {value, done} = this.iter.next();
+        let {value, done} = this.iter.next();
+        value = Number(value); // allow '0' for false.
         if (done) {
           this.iter = null;
         } else {
@@ -82,23 +88,26 @@ class CL {
     return parts.join('');
   }
 
-  toString(radix = 10, digits = 30) {
+  toString(radix = 10, digits = this.finite ? Infinity : 30) {
 //console.log('toString('+radix+', '+digits+')');
+    digits += 3; // whole, decimal, appprox
     radix = BigInt(radix);
     let parts = []
-    let a = 0n;
+    let a = 1n;
     let b = 0n;
     let c = 0n;
     let d = 1n;
     let last = null;
     let next = null;
     let index = 0;
-FOR:
+    let decimal = '';
+    let approx = false;
     for (const e of this) {
+      if (approx) break;
 //console.log('a='+a+', b='+b+', c='+c+', d='+d+', e='+e);
       index++;
       if (index == 1) {
-        a = e ? 1n : -1n;
+        parts.push(e ? '' : '-');
         continue;
       } else if (index == 2) {
         if (!e) [a, b, c, d] = [b, a, d, c];
@@ -116,28 +125,32 @@ FOR:
         [a, b, c, d] = [a + b, a, c + d, c];
         // TODO(sdh): check for gcd? may never get one...
       }
-      while (c != 0n && d != 0n) {
+      while (c && d && (a || b) && !approx) {
         last = b / d;
         next = a / c;
 //console.log('last='+last+', next='+next);
         if (last == next) {
-          if (parts.length == 1) parts.push('.');
+          if (parts.length == 2) parts.push(decimal = '.');
           parts.push(last.toString(Number(radix)));
           a = radix * (a - c * last);
           b = radix * (b - d * last);
+          if (last < 0n) {
+            [a, b] = [-a, -b]
+          }
           // Note: it's possible that the first few digits can be reduced if
           // there's a GCD != 1 after multiplying the radix - but once we reach
           // unity, there's no point checking going forward since it will never
           // happen again.
-          if (parts.length > digits) break FOR;
+          if (parts.length > digits) approx = true;
         } else break;
       }
     }
-    while (parts.length <= digits && a != 0 && c != 0) {
+    while (!approx && a && c) {
       next = a / c;
-      if (parts.length == 1) parts.push('.');
+      if (parts.length == 2) parts.push('.');
       parts.push(next.toString(Number(radix)));
       a = radix * (a - c * next);
+      if (parts.length > digits) approx = true;
     }
     // TODO - if the last digit was >= half, round up
     // the previous one - may cause chaining carries!
@@ -145,6 +158,36 @@ FOR:
     //      preceding, until we either see a smaller term or else finish.
     //      If we finish with >=radix/2 then just increment the last smaller
     //      term and drop all the radix-1 terms.  This should be a generator.
+    if (approx) {
+      radix = Number(radix);
+      const nine = (radix - 1).toString(radix);
+      const incr = (digit) => {
+        const whole = parts[1];
+        parts.splice(1, 1, ...whole.split(''));
+        while (true) {
+          if (digit == 0) {
+            parts.splice(1, 0, '1');
+            break;
+          } else if (parts[digit] == nine) {
+            parts[digit] = '0';
+            digit--;
+          } else if (parts[digit] == '.') {
+            digit -= 2;
+          } else {
+            break;
+          }
+        }
+      }
+      if (Number.parseInt(parts.pop(), radix) * 2 >= radix) {
+        incr(parts.length - 1);
+      }
+    }
+    while (parts[parts.length - 1] == '0' && decimal) {
+      parts.pop();        
+    }
+    if (parts[parts.length - 1] == '.') {
+      parts.pop();
+    }
     return parts.join('');
   }
 
@@ -185,6 +228,22 @@ FOR:
     return next;
   }
 
+  reciprocal() {
+    const iter = this[Symbol.iterator]();
+    return new CL(function * () {
+      let result = iter.next();
+      if (result.done) {
+        // ??? doesn't seem quite right
+        while (true) yield 1;
+      }
+      yield result.value;
+      result = iter.next();
+      if (result.done) return;
+      yield 1 - result.value;
+      yield * iter;
+    }(), this.finite);
+  }
+
   /**
    * Make a fixed continued logarithm.
    * @param {number|bigint|string|!Array<number|bigint|string>} number
@@ -205,22 +264,6 @@ FOR:
       return ofRat(topTop * bottomBottom, topBottom * bottomTop);
     }
     return ofRat(...parseRat(number, radix));
-  }
-
-  reciprocal() {
-    const iter = this[Symbol.iterator]();
-    return new CL(function * () {
-      let result = iter.next();
-      if (result.done) {
-        // ??? doesn't seem quite right
-        while (true) yield 1;
-      }
-      yield result.value;
-      result = iter.next();
-      if (result.done) return;
-      yield 1 - result.value;
-      yield * iter;
-    }());
   }
 }
 
@@ -270,7 +313,7 @@ function ofRat(num, den) {
       }
     }
     yield 0; // ???
-  }());
+  }(), true);
 }
 
 
