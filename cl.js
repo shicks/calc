@@ -185,89 +185,26 @@ FOR:
     return next;
   }
 
-  static of(number) {
-    return new CL(function * () {
-      let index = 0;
-      if (number < 0) {
-//console.log('neg: 0');
-        yield 0;
-        number *= -1;
-      } else if (number > 0) {
-//console.log('pos: 1');
-        yield 1;
-      } else {
-//console.log('zero');
-        return;
-      }
-      if (number < 1) {
-//console.log('recip: 0');
-        yield 0;
-        number = 1 / number;
-      } else if (number > 1) {
-//console.log('normal: 1');
-        yield 1;
-      } else {
-//console.log('one');
-        return;
-      }
-      while (number != 1) { // && index++ < 100) {
-        if (number >= 2) {
-//console.log(`1: ${number} => ${number / 2}`);
-          yield 1;
-          number /= 2;
-        } else {
-//console.log(`0: ${number} => ${1 / (number - 1)}`);
-          yield 0;
-          number = 1 / (number - 1);
-        }
-      }
-//console.log('end');
-      yield 0; // ???
-    }());
-  }
-
-  static ofRat(num, den) {
-    num = BigInt(num);
-    den = BigInt(den);
-    return new CL(function * () {
-      if (num == 0n) {
-        return;
-      } else if (num < 0n && den < 0n) {
-        num *= -1n;
-        den *= -1n;
-        yield 1;
-      } else if (num < 0n) {
-        num *= -1n;
-        yield 0;
-      } else if (den < 0n) {
-        den *= -1n;
-        yield 0;
-      } else {
-        yield 1;
-      }
-      if (num == den) {
-        return;
-      } else if (num < den) {
-        [num, den] = [den, num];
-        yield 0;
-      } else {
-        yield 1;
-      }
-      while (num != den) {
-        if (num >= (den << 1n)) {
-          if (num & 1n) {
-            den <<= 1n;
-          } else {
-            num >>= 1n;
-          }
-          yield 1;
-        } else {
-          [num, den] = [den, num - den];
-          yield 0;
-        }
-      }
-      yield 0; // ???
-    }());
+  /**
+   * Make a fixed continued logarithm.
+   * @param {number|bigint|string|!Array<number|bigint|string>} number
+   *     The number.  A rational may be given using a two-element array.
+   * @param {number|bigint=} radix Only applies to string inputs.
+   * @return {!CL}
+   */
+  static of(number, radix = 10) {
+    radix = Number(radix);
+    if (typeof number == 'string' && number.includes('/')) {
+      number = number.split(/\s*\/\s*/);
+    }
+    if (number instanceof Array) {
+      // parse top and bottom.
+      if (number.length != 2) throw new Error('CL.of expects 2-element array');
+      const [topTop, topBottom] = parseRat(number[0], radix);
+      const [bottomTop, bottomBottom] = parseRat(number[1], radix);
+      return ofRat(topTop * bottomBottom, topBottom * bottomTop);
+    }
+    return ofRat(...parseRat(number, radix));
   }
 
   reciprocal() {
@@ -286,6 +223,339 @@ FOR:
     }());
   }
 }
+
+/**
+ * @param {bigint} num
+ * @param {bigint} den
+ * @return {!CL}
+ */
+function ofRat(num, den) {
+  num = BigInt(num);
+  den = BigInt(den);
+  return new CL(function * () {
+    if (num == 0n) {
+      return;
+    } else if (num < 0n && den < 0n) {
+      num *= -1n;
+      den *= -1n;
+      yield 1;
+    } else if (num < 0n) {
+      num *= -1n;
+      yield 0;
+    } else if (den < 0n) {
+      den *= -1n;
+      yield 0;
+    } else {
+      yield 1;
+    }
+    if (num == den) {
+      return;
+    } else if (num < den) {
+      [num, den] = [den, num];
+      yield 0;
+    } else {
+      yield 1;
+    }
+    while (num != den) {
+      if (num >= (den << 1n)) {
+        if (num & 1n) {
+          den <<= 1n;
+        } else {
+          num >>= 1n;
+        }
+        yield 1;
+      } else {
+        [num, den] = [den, num - den];
+        yield 0;
+      }
+    }
+    yield 0; // ???
+  }());
+}
+
+
+/**
+ * @param {string|number|bigint} num
+ * @param {number} radix
+ * @return {!Array<bigint>}
+ */
+function parseRat(num, radix) {
+  if (typeof num != 'string') radix = 10;
+  const match = /([+-]?[0-9]*)(?:\.([0-9]*))?(?:e([+-]?[0-9]+))?/.exec(num);
+  if (!match) throw new Error('bad string: ' + num);
+  const [_, whole, decimal, exponent] = match;
+  let top = whole;
+  let bottom = '1';
+  if (decimal) {
+    top = top + decimal;
+    bottom = bottom + '0'.repeat(decimal.length);
+  }
+  if (exponent) {
+    const exp = Number(exponent); // radix?
+    if (exp > 0n) {
+      top = top + '0'.repeat(exp);
+    } else {
+      bottom = bottom + '0'.repeat(-exp);
+    }
+  }
+  // TODO - use radix instead of bigint ctor (at least if radix != 10 or 16)
+  return [BigInt(top), BigInt(bottom)];
+}
+
+function homographic(top, bottom) {
+  // Returns a function on N inputs.
+  // top and bottom are arrays of tuples where the first N elements are
+  // the powers of the corresponding inputs (for N inputs), and the final
+  // element is the coefficient.  So [2, 0, 0, 1] would indicate that we
+  // have three inputs (call them x, y, and z) and that the x^2 term has
+  // coefficient 1, while [0, 1, 1, 2] would be 2yz, and [0, 0, 0, 1] is
+  // a constant term in the polynomial.
+
+  // Find the arity and max power for each term.
+  if (!top.length || !bottom.length) throw new Error('Missing term');
+  const max = null;
+  for (const term of top.concat(bottom)) {
+    if (max == null) {
+      max = new Array(term.length - 1).fill(0);
+    } else if (max.length != term.length - 1) {
+      throw new Error('Length mismatch');
+    }
+    for (let i = 0; i < max.length; i++) {
+      max[i] = Math.max(max[i], term[i]);
+    }
+  }
+
+  // Add 1 and multiply to find total nubmer of coeffs on top and bottom
+  const count = max.reduce((x, y) => x * (y + 1), 1) * 2;
+  
+
+  // 
+
+  // 4. build the recurrence tables for that count (note: should cache these)
+}
+
+
+function range(n) {
+  let value = -1;
+  return {
+    [Symbol.iterator]() { return this; },
+    next() { return ++value < n ? {value, done: false} : {done: true}; },
+  };
+}
+
+function pascalTriangle(height) {
+  const triangle = [];
+  let arr = null;
+  for (let i = 0; i < height; i++) {
+    if (arr) {
+      arr = Array.from(range(i + 1), k => (arr[k - 1] || 0n) + (arr[k] || 0n));
+    } else {
+      arr = [1n];
+    }
+    triangle.push(arr);
+  }
+  return triangle;
+}
+
+class CoefficientsTable {
+
+  constructor(powers) {
+    const plus1Product = arr => arr.reduce((x, y) => x * (y + 1), 1);
+    this.count = plus1Product(powers) * 2;
+    this.pascal = pascalTriangle(Math.max(...powers));
+    this.powers = powers;
+    this.pre =
+        Array.from(
+            range(powers.length),
+            i => plus1Product(powers.slice(0, i)));
+    this.post =
+        Array.from(
+            range(powers.length),
+            i => plus1Product(powers.slice(i + 1)));
+  }
+
+  ingestSign(input, value, table) {
+    if (value) return table;
+
+    // TODO - value == null means something different, handle it here?
+
+    const pre = 2 * this.pre[input]; // ingestion doesn't care about top/bottom
+    const post = this.post[input];
+    const pow = this.powers[input];
+    for (let j = 1; j <= pow; j += 2) {
+      let index = j * post;
+      for (let i = 0; i < pre; i++) {
+        for (let k = 0; k < post; k++) {
+          result[index] = -table[index]
+          index++;
+        }
+        index += post + pow + 1;
+      }
+    }
+    return result;
+  }
+
+  ingestRecip(input, value, table) {
+    if (value) return table;
+    const pre = 2 * this.pre[input];
+    const post = this.post[input];
+    const pow = this.powers[input];
+    for (let i = 0; i < pre; i++) {
+      for (let j = 0; j <= pow; j++) {
+        for (let k = 0; k < post; k++) {
+          result[index] = table[index + (pow - j) * post];
+        }
+      }
+    }
+    return result;
+  }
+
+  // returns the new table
+  ingest(input, value, table) {
+    const result = new Array(table.length);
+    const pre = 2 * this.pre[input]; // treat top and bottom same
+    const post = this.post[input];
+    const pow = this.powers[input];
+    if (value) {
+      let index = 0;
+      for (let i = 0; i < pre; i++) {
+        for (let j = 0; j <= pow; j++) {
+          for (let k = 0; k < post; k++) {
+            result[index] = table[index] << BigInt(j);
+            index++;
+          }
+        }
+      }
+    } else {
+      let index = 0;
+      for (let i = 0; i < pre; i++) {
+        for (let j = pow; j >= 0; j--) {
+          for (let k = 0; k < post; k++) {
+            result[index] = 0;
+            // j = pow is constant term, only has pow term [index + pow * post]
+            for (let h = pow; h <= j; h++) {
+              result[index] += this.pascal[h][j] * table[index + h * post];
+            }
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  // returns the new table
+  egest(value, table) {
+    const half = this.count / 2;
+    if (value) {
+      const result = table.slice();
+      for (let i = this.count - 1; i >= half; i--) {
+        result[i] <<= 1n;
+      }
+      return result;
+    } else {
+      const result = new Array(table.length);
+      let common = 0;
+      for (let i = 0; i < half; i++) {
+        result[index] = table[index + half];
+        result[index + half] = table[index] - table[index + half];
+        if (common > 1) {
+          common = gcd(gcd(common, result[index]), result[index + half]);
+        }
+      }
+      if (common > 1) {
+        for (let i = this.count - 1; i >= 0; i--) {
+          result[i] /= common;
+        }
+      }
+      return result;
+    }
+  }
+
+  // returns the new table
+  egestRecip(value, table) {
+    if (value) return table;
+    const half = this.count / 2;
+    const result = new Array(table.length);
+    let temp;
+    for (let i = 0; i < half; i++) {
+      temp = result[i];
+      result[i] = result[i + half];
+      result[i + half] = temp;
+    }
+    return result;
+  }
+
+  // returns the new table
+  egestSign(value, table) {
+    if (value) return table;
+    const half = this.count / 2;
+    const result = table.slice();
+    for (let i = 0; i < half; i++) {
+      result[i] = -result[i];
+    }
+    return result;
+  }
+
+  next(egested, table) {
+    // Look at the table and figure out what to do.  Return an object
+    // literal with {ingest: <input>, egest: <digits in string>, table: <array>}
+    // First determine whether we have a consistent result.
+    const half = this.count / 2;
+    const egest = [];
+    OUTER:
+    while (true) {
+      const threshold = BigInt(Math.min(egested, 2));
+      const sign = table[0] - (table[half] * threshold) >= 0n;
+      for (let i = 0; i < half; i++) {
+        if (sign != (table[i] - (table[half] * threshold) >= 0n)) {
+          break OUTER;
+        }
+      }
+      egest.push(sign ? 1 : 0);
+      if (egested == 0) table = this.egestSign(sign, table);
+      if (egested == 1) table = this.egestRecip(sign, table);
+      if (egested >= 2) table = this.egest(sign, table);
+    }
+    // compare abs(a001/b001-a000/b000) a010/b010 
+    const quotient = table[0] / table[half];
+    // measure quotient for other indices by computing array offset
+    // ask for input corresponding to max
+    let biggestInput = 0;
+    let biggestDiff = 0;
+    let offset = 1;
+    for (let i = 0; i < this.powers.length; i++) {
+      const diff = Math.abs(table[i] / table[i + half] - quotient);
+      if (diff > biggestDiff) {
+        biggestDiff = diff;
+        biggestInput = i;
+      }
+    }
+  }
+
+  static of(powers) {
+    const cache = {};
+    const f = CoefficientsTable.of = (powers) => {
+      return cache[powers] || (cache[powers] = new CoefficientsTable(powers));
+    };
+    return f(powers);
+  }
+}
+
+
+function gcd(a, b) {
+  let c;
+  while (a && b) {
+    if (a < b) {
+      c = a;
+      a = b;
+      b = c;
+    } else {
+      a = a % b;
+    }
+  }
+  return a ? a : b;
+}
+
 
 
 class Homograph {
@@ -728,19 +998,32 @@ radix = BigInt(radix);
 
 module.exports = {CL, Homograph, Bihomograph};
 
-let x = CL.of(172.34);
-console.log(x.toDebugString());
-//console.log(Number(x));
-console.log(x.toString());
-console.log(x.toDebugString());
+// for (const row of pascalTriangle(64)) {
+//   console.log(row.map(x=>x%2n?'#':' ').join(''));
+// }
+
+// let x = CL.of(172.34);
+// console.log(x.toDebugString());
+// //console.log(Number(x));
+// console.log(x.toString());
+// console.log(x.toDebugString());
 
 
-// this convergent gets 27 digits of pi - last 3 printed are off
-x = CL.ofRat(1019514486099146n, 324521540032945n);
-console.log(x.toDebugString());
-//console.log(Number(x));
-console.log(x.toString());
-console.log(x.toDebugString());
+// x = CL.of('1e1000');
+// console.log(x.toDebugString());
+// //console.log(Number(x));
+// console.log(x.toString());
+// console.log(x.toDebugString());
+
+
+// // this convergent gets 27 digits of pi - last 3 printed are off
+// x = CL.of([1019514486099146n, 324521540032945n]);
+// console.log(x.toDebugString());
+// //console.log(Number(x));
+// console.log(x.toString());
+// console.log(x.toDebugString());
+
+
 
 
 // const h = Homograph.ofRat(72 * 8 + 1, 8);
