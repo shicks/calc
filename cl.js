@@ -33,8 +33,8 @@ class CL {
     return {
       [Symbol.iterator]() { return this; },
       next: () => {
-        if (index++ < this.bits.size()) {
-          return {value: this.bits.get(index), done: false};
+        if (index < this.bits.size()) {
+          return {value: this.bits.get(index++), done: false};
         } else if (!this.iter) {
           return {value: undefined, done: true};
         }
@@ -45,6 +45,7 @@ class CL {
         } else {
           this.bits.add(value);
         }
+        index++;
         return {value, done};
       },
     };
@@ -77,6 +78,7 @@ class CL {
   // only shows the currently computed terms
   toDebugString() {
     // NOTE: toDebugString changes as more terms are realized
+    if (this.finite) this.toString();
     let parts = ['['];
     const size = this.bits.size();
     for (let index = 0; index < size; index++) {
@@ -88,7 +90,9 @@ class CL {
     return parts.join('');
   }
 
-  toString(radix = 10, digits = this.finite ? Infinity : 30) {
+  toString(radix = 10, digits = CL.DIGITS) {
+    // NOTE: even finite CLs need a cap on digits, since they might repeat.
+    // We could possibly represent the repeat as '3.(142857)'
 //console.log('toString('+radix+', '+digits+')');
     digits += 3; // whole, decimal, appprox
     radix = BigInt(radix);
@@ -112,6 +116,11 @@ class CL {
       } else if (index == 2) {
         if (!e) [a, b, c, d] = [b, a, d, c];
         continue;
+      }
+      const g = gcd(a, gcd(b, gcd(c, d)));
+      if (g > 1n) {
+        console.log('reduce by ' + g);
+        a /= g; b /= g; c /= g; d /= g;
       }
       if (e) {
         if (!(b & 1n) && !(d & 1n)) {
@@ -145,11 +154,18 @@ class CL {
         } else break;
       }
     }
-    while (!approx && a && c) {
-      next = a / c;
+    if (index == 0) {
+      return '0';
+    } else if (index == 1) {
+      return parts[0] + '1';
+    }
+    b += 2n * a;
+    d += 2n * c;
+    while (!approx && b && d) {
+      next = b / d;
       if (parts.length == 2) parts.push('.');
       parts.push(next.toString(Number(radix)));
-      a = radix * (a - c * next);
+      b = radix * (b - d * next);
       if (parts.length > digits) approx = true;
     }
     // TODO - if the last digit was >= half, round up
@@ -178,9 +194,10 @@ class CL {
           }
         }
       }
-      if (Number.parseInt(parts.pop(), radix) * 2 >= radix) {
-        incr(parts.length - 1);
-      }
+      // if (Number.parseInt(parts.pop(), radix) * 2 >= radix) {
+      //   incr(parts.length - 1);
+      // }
+      if (approx) parts.push('...');
     }
     while (parts[parts.length - 1] == '0' && decimal) {
       parts.pop();        
@@ -189,6 +206,47 @@ class CL {
       parts.pop();
     }
     return parts.join('');
+  }
+
+  toFrac(radix = 10, terms = this.finite ? Infinity : CL.PRECISION) {
+//console.log('toString('+radix+', '+digits+')');
+    radix = Number(radix);
+    let a = 1n;
+    let b = 0n;
+    let c = 0n;
+    let d = 1n;
+    let index = 0;
+    for (const e of this) {
+//console.log('a='+a+', b='+b+', c='+c+', d='+d+', e='+e);
+      if (index++ >= terms) break;
+      if (index == 1) {
+        if (!e) a = -a;
+        continue;
+      } else if (index == 2) {
+        if (!e) [a, b, c, d] = [b, a, d, c];
+        continue;
+      }
+      if (e) {
+        if (!(b & 1n) && !(d & 1n)) {
+          b >>= 1n;
+          d >>= 1n;
+        } else {
+          a <<= 1n;
+          c <<= 1n;
+        }
+      } else {
+        [a, b, c, d] = [a + b, a, c + d, c];
+        // TODO(sdh): check for gcd? may never get one...
+      }
+    }
+    const x = BigInt(Math.min(2, index));
+    b += a * x;
+    d += c * x;
+    const g = gcd(b, d);
+    b /= g;
+    d /= g;
+    if (d == 1n) return b.toString(radix);
+    return b.toString(radix) + '/' + d.toString(radix);
   }
 
   valueOf() {
@@ -217,7 +275,7 @@ class CL {
           c <<= 1n;
         }
       } else {
-        [a, b, c, d] = [a + b, a, c + d , c];
+        [a, b, c, d] = [a + b, a, c + d, c];
         // TODO(sdh): check for gcd? may never get one...
       }
       if ((next = Number(a) / Number(c)) == last) {
@@ -226,6 +284,7 @@ class CL {
       last = next;
     }
     return next;
+    //return Number(2n * a + b) / Number(2n * c + d);
   }
 
   reciprocal() {
@@ -245,13 +304,14 @@ class CL {
   }
 
   /**
-   * Make a fixed continued logarithm.
+   * Make a finite continued logarithm.
    * @param {number|bigint|string|!Array<number|bigint|string>} number
    *     The number.  A rational may be given using a two-element array.
    * @param {number|bigint=} radix Only applies to string inputs.
    * @return {!CL}
    */
   static of(number, radix = 10) {
+//console.log(`CL.of(${number})`);
     radix = Number(radix);
     if (typeof number == 'string' && number.includes('/')) {
       number = number.split(/\s*\/\s*/);
@@ -266,6 +326,9 @@ class CL {
     return ofRat(...parseRat(number, radix));
   }
 }
+
+CL.PRECISION = 512;
+CL.DIGITS = 100;
 
 /**
  * @param {bigint} num
@@ -299,7 +362,8 @@ function ofRat(num, den) {
     } else {
       yield 1;
     }
-    while (num != den) {
+    while (num != den << 1n) {
+//console.log(`ofRat: ${num} / ${den}`);
       if (num >= (den << 1n)) {
         if (num & 1n) {
           den <<= 1n;
@@ -312,8 +376,94 @@ function ofRat(num, den) {
         yield 0;
       }
     }
-    yield 0; // ???
+    //yield 0; // ???
   }(), true);
+}
+
+
+/**
+ * Converts a non-standard continued fraction to a continued logarithm.
+ * @param {!Iterable<bigint>} cf Iterable of alternating partial denominators
+ *     and numerators. [2, 3, 4, 5, 6, ...] would represent 2+3/(4+5/(6+...)).
+ * @param {!Array<number|bigint>} init Tuple of initial homographic params.
+ * @return {!CL}
+ */
+function ofNonstandardCf(cf, [a, b, c, d] = [1, 0, 0, 1]) {
+  return new CL(function * () {
+    // homographic terms: z = (ax+b)/(cx+d)
+    a = BigInt(a);
+    b = BigInt(b);
+    c = BigInt(c);
+    d = BigInt(d);
+    let thresh = 0n;
+    let top = true;
+    for (let e of cf) {
+      e = BigInt(e);
+      if (top) {
+        // ingest x -> x + e
+        // z = (ax + ae+b) / (cx + ce+d)
+        b += e * a;
+        d += e * c;
+      } else {
+        // ingest x -> e / x
+        // z = (bx + ae) / (dx + ce)
+//console.log(`a=${a}, b=${b}, a*e=${a*e}`);
+        [a, b, c, d] = [b, a * e, d, c * e];
+      }
+//console.log(`ingest ${top?'top':'bottom'} ${e} => ${a} x + ${b} / ${c} x + ${d}`);
+      top = !top;
+      // now try to egest as much as possible
+      while (true) {
+        // bounds are more generous because x ∈ (-∞, ∞).
+        const nd = d - c;
+        const pd = d + c;
+        const nn = b - a;
+        const pn = b + a;
+        if (a == 0n || c == 0n || d == 0n
+            || nn <= 0n && pn >= 0n
+            || nn >= 0n && pn <= 0n
+            || nd <= 0n && pd >= 0n
+            || nd >= 0n && pd <= 0n) break;
+        const neg = b - thresh * d;
+        const pos = a - thresh * c;
+//console.log(`bounds ${neg} .. ${pos}`);
+        if (neg > 0n && pos > 0n) {
+          // egest a 1
+          if (thresh == 2n) {
+            if (a & 1n || b & 1n) {
+              c <<= 1n;
+              d <<= 1n;
+            } else {
+              a >>= 1n;
+              b >>= 1n;
+            }
+          } else {
+            thresh++;
+          }
+//console.log(`egest 1 => ${a} x + ${b} / ${c} x + ${d}`);
+          yield 1;
+        } else if (neg < 0n && pos < 0n) {
+          // egest a 0
+          if (thresh == 0n) {
+            a = -a;
+            b = -b;
+            thresh++;
+          } else if (thresh == 1n) {
+            [a, b, c, d] = [c, d, a, b];
+            thresh++;
+          } else {
+            [a, b, c, d] = [c, d, a - c, b - d];
+          }
+//console.log(`egest 0 => ${a} x + ${b} / ${c} x + ${d}`);
+          yield 0;
+        } else {
+          break;
+        }
+      }
+    }
+    // At this point assume x == ∞.
+    throw new Error('only use ofNonstandardCf for infinite fractions');
+  }(), false);
 }
 
 
@@ -586,6 +736,8 @@ class CoefficientsTable {
 
 
 function gcd(a, b) {
+  if (a < 0) a = -a;
+  if (b < 0) b = -b;
   let c;
   while (a && b) {
     if (a < b) {
@@ -1092,3 +1244,25 @@ module.exports = {CL, Homograph, Bihomograph};
 //   //console.log('egest ' + next + ': ' + String(h));
 // }
 // console.log(s+digits.join(''));
+
+const pi = ofNonstandardCf(function*(){
+  let a = 1;
+  let b = 1;
+  while (true) {
+    yield a;
+    a += 2;
+    yield b;
+    b += a;
+  }
+}(), [0, 4, 1, 0]);
+console.log(pi.toString(10, 1000));
+
+const e = ofNonstandardCf(function*(){
+  yield 2;
+  let a = 2;
+  while (true) {
+    yield * [1, 1, 1, a, 1, 1];
+    a += 2;
+  }
+}());
+console.log(e.toString(10, 1000));
