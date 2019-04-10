@@ -1,6 +1,7 @@
 // Continued logarithms
-
 const {BitSet} = require('./bitset.js');
+
+let LOG = false;
 
 /**
  * A continued logarithm.
@@ -117,11 +118,12 @@ class CL {
         if (!e) [a, b, c, d] = [b, a, d, c];
         continue;
       }
-      const g = gcd(a, gcd(b, gcd(c, d)));
-      if (g > 1n) {
-        console.log('reduce by ' + g);
-        a /= g; b /= g; c /= g; d /= g;
-      }
+      // NOTE: this is slow, might only be worth doing every so often
+      // const g = gcd(a, gcd(b, gcd(c, d)));
+      // if (g > 1n) {
+      //   console.log('reduce by ' + g);
+      //   a /= g; b /= g; c /= g; d /= g;
+      // }
       if (e) {
         if (!(b & 1n) && !(d & 1n)) {
           b >>= 1n;
@@ -256,35 +258,35 @@ class CL {
     let d = 1n;
     let last = NaN;
     let next = NaN;
-    let index = 0;
+    let index = 0n;
     for (const e of this) {
-      index++;
-      if (index == 1) {
+      if (index == 0n) {
         a = e ? 1n : -1n;
+        index++;
         continue;
-      } else if (index == 2) {
-        [a, b, c, d] = [b, a, d, c];
+      } else if (index == 1n) {
+        if (!e) [a, b, c, d] = [b, a, d, c];
+        index++;
         continue;
       }
       if (e) {
         if ((b & 1n) || (d & 1n)) {
-          b >>= 1n;
-          d >>= 1n;
-        } else {
           a <<= 1n;
           c <<= 1n;
+        } else {
+          b >>= 1n;
+          d >>= 1n;
         }
       } else {
         [a, b, c, d] = [a + b, a, c + d, c];
         // TODO(sdh): check for gcd? may never get one...
       }
-      if ((next = Number(a) / Number(c)) == last) {
-        break;
+      if ((next = Number(2n * a + b) / Number(2n * c + d)) == last) {
+        return next;
       }
       last = next;
     }
-    return next;
-    //return Number(2n * a + b) / Number(2n * c + d);
+    return Number(index * a + b) / Number(index * c + d);
   }
 
   reciprocal() {
@@ -292,7 +294,7 @@ class CL {
     return new CL(function * () {
       let result = iter.next();
       if (result.done) {
-        // ??? doesn't seem quite right
+        // infinity
         while (true) yield 1;
       }
       yield result.value;
@@ -300,7 +302,44 @@ class CL {
       if (result.done) return;
       yield 1 - result.value;
       yield * iter;
+    }(), this.finite && this.get(0) != null);
+  }
+
+  negate() {
+    const iter = this[Symbol.iterator]();
+    return new CL(function * () {
+      let result = iter.next();
+      if (result.done) return;
+      yield 1 - result.value;
+      yield * iter;
     }(), this.finite);
+  }
+
+  abs() {
+    const iter = this[Symbol.iterator]();
+    return new CL(function * () {
+      let result = iter.next();
+      if (result.done) return;
+      yield 1;
+      yield * iter;
+    }(), this.finite);
+  }
+
+  cmp(that) {
+    const precision = this.finite || that.finite ? Infinity : CL.PRECISION;
+    const thisIter = this[Symbol.iterator]();
+    const thatIter = that[Symbol.iterator]();
+    let index = 0;
+    let sign = 1;
+    for (let index = 0; index < precision; index++) {
+      let {value: left, done: leftDone} = thisIter.next();
+      let {value: right, done: rightDone} = thatIter.next();
+      if (leftDone) left = 0.5;
+      if (rightDone) right = 0.5;
+      if (left != right) return sign * (left - right);
+      if (leftDone) return 0;
+      if (left == 0) sign *= -1;
+    }
   }
 
   /**
@@ -324,6 +363,10 @@ class CL {
       return ofRat(topTop * bottomBottom, topBottom * bottomTop);
     }
     return ofRat(...parseRat(number, radix));
+  }
+
+  static fromNonstandardContinuedFraction(cf, matrix = undefined) {
+    return ofNonstandardCf(cf, matrix);
   }
 }
 
@@ -517,11 +560,11 @@ function homographic(top, bottom) {
       max[i] = Math.max(max[i], term[i]);
     }
   }
-
-  // Add 1 and multiply to find total nubmer of coeffs on top and bottom
-  const count = max.reduce((x, y) => x * (y + 1), 1) * 2;
-  
-
+  const coeffs = new CoefficientsTable(max);
+  return new CL(function * () {
+    let table = coeffs.buildTable(top, bottom);
+    
+  });
   // 
 
   // 4. build the recurrence tables for that count (note: should cache these)
@@ -539,7 +582,7 @@ function range(n) {
 function pascalTriangle(height) {
   const triangle = [];
   let arr = null;
-  for (let i = 0; i < height; i++) {
+  for (let i = 0; i <= height; i++) {
     if (arr) {
       arr = Array.from(range(i + 1), k => (arr[k - 1] || 0n) + (arr[k] || 0n));
     } else {
@@ -567,22 +610,41 @@ class CoefficientsTable {
             i => plus1Product(powers.slice(i + 1)));
   }
 
+  buildTable(top, bottom) {
+    const table = new Array(this.count).fill(0n);
+    for (const t of top) {
+      let index = 0;
+      for (let i = 0; i < this.post.length; i++) {
+        index += t[i] * this.post[i];
+      }
+      table[index] += BigInt(t[t.length - 1]);
+    }
+    for (const b of bottom) {
+      let index = 0;
+      for (let i = 0; i < this.post.length; i++) {
+        index += b[i] * this.post[i];
+      }
+      table[this.count / 2 + index] += BigInt(b[b.length - 1]);
+    }
+    return table;
+  }
+
   ingestSign(input, value, table) {
     if (value) return table;
+    const result = new Array(table.length);
 
     // TODO - value == null means something different, handle it here?
 
     const pre = 2 * this.pre[input]; // ingestion doesn't care about top/bottom
     const post = this.post[input];
     const pow = this.powers[input];
-    for (let j = 1; j <= pow; j += 2) {
-      let index = j * post;
-      for (let i = 0; i < pre; i++) {
+    let index = 0;
+    for (let i = 0; i < pre; i++) {
+      for (let j = 0; j <= pow; j++) {
         for (let k = 0; k < post; k++) {
-          result[index] = -table[index]
+          result[index] = j % 2 ? -table[index] : table[index];
           index++;
         }
-        index += post + pow + 1;
       }
     }
     return result;
@@ -590,13 +652,16 @@ class CoefficientsTable {
 
   ingestRecip(input, value, table) {
     if (value) return table;
+    const result = new Array(table.length);
     const pre = 2 * this.pre[input];
     const post = this.post[input];
     const pow = this.powers[input];
+    let index = 0;
     for (let i = 0; i < pre; i++) {
       for (let j = 0; j <= pow; j++) {
         for (let k = 0; k < post; k++) {
-          result[index] = table[index + (pow - j) * post];
+          result[index] = table[index + (pow - 2 * j) * post];
+          index++;
         }
       }
     }
@@ -620,15 +685,28 @@ class CoefficientsTable {
         }
       }
     } else {
+      // To ingest a 0, we need to use pascal's triangle.
+      // Suppose a cubic term: a3*x^3 + a2*x^2 + a1*x + a0
+      // We add a synthetic w=1 term to balance total powers
+      // (e.g. a3*x^3 + a2*x^2*w + a1*x*w^2 + a0*w^3).  Then
+      // x -> 1+x and w -> x.
+      // So a3 <- a3 + a2 + a1 + a0  (1 1 1 1)
+      //    a2 <- 3*a3 + 2*a2 + a1   (3 2 1)
+      //    a1 <- 3*a3 + a2          (3 1)
+      //    a0 <- a3                 (1)
+      // This is just a sidewise view of (1)(1 1)(1 2 1)(1 3 3 1).
+
       let index = 0;
       for (let i = 0; i < pre; i++) {
         for (let j = pow; j >= 0; j--) {
           for (let k = 0; k < post; k++) {
-            result[index] = 0;
+            result[index] = 0n;
             // j = pow is constant term, only has pow term [index + pow * post]
-            for (let h = pow; h <= j; h++) {
-              result[index] += this.pascal[h][j] * table[index + h * post];
+            for (let h = j; h <= pow; h++) {
+              result[index] +=
+                  this.pascal[h][j] * table[index + (h + j - pow) * post];
             }
+            index++;
           }
         }
       }
@@ -649,8 +727,11 @@ class CoefficientsTable {
       const result = new Array(table.length);
       let common = 0;
       for (let i = 0; i < half; i++) {
-        result[index] = table[index + half];
-        result[index + half] = table[index] - table[index + half];
+        result[i] = table[i + half];
+        result[i + half] = table[i] - table[i + half];
+        // TODO - this doesn't actually fire; it would be nice to check this
+        // but maybe not quite as often?  Maybe only once every 10th or 20th
+        // egestion?
         if (common > 1) {
           common = gcd(gcd(common, result[index]), result[index + half]);
         }
@@ -671,9 +752,8 @@ class CoefficientsTable {
     const result = new Array(table.length);
     let temp;
     for (let i = 0; i < half; i++) {
-      temp = result[i];
-      result[i] = result[i + half];
-      result[i + half] = temp;
+      result[i] = table[i + half];
+      result[i + half] = table[i];
     }
     return result;
   }
@@ -691,38 +771,205 @@ class CoefficientsTable {
 
   next(egested, table) {
     // Look at the table and figure out what to do.  Return an object
-    // literal with {ingest: <input>, egest: <digits in string>, table: <array>}
+    // literal with {ingest: <bitmask>, egest: <digits in string>, table: <array>}
     // First determine whether we have a consistent result.
     const half = this.count / 2;
     const egest = [];
-    OUTER:
-    while (true) {
-      const threshold = BigInt(Math.min(egested, 2));
-      const sign = table[0] - (table[half] * threshold) >= 0n;
-      for (let i = 0; i < half; i++) {
-        if (sign != (table[i] - (table[half] * threshold) >= 0n)) {
-          break OUTER;
+    let indices = new Set(this.powers.keys());
+    const ingest = [];
+
+    const sameSign = (a, b) => a < 0n && b < 0n || a > 0n && b > 0n;
+
+//     const ingestFor = (i) => {
+      // TODO - log this - we're getting a 2 when we really want 0 and 1
+//       //if (sign >= 0 && thisSign <= 0 || sign <= 0 && thisSign >= 0) {
+//       // sign conflict - any variables present here should be set as
+//       // to ingest
+//       for (const j of indices) {
+//         // consider 2 2 1
+//         // 000 001 010 011 020 021 100 101 110 111 120 121 200 ...
+//         // powers = 2, 2, 1
+//         // pre    = 1, 3, 9
+//         // post   = 6, 2, 1
+//         //   -> floor((i % post[j - 1]) / post[j]) > 0
+//         if (i % (j ? this.post[j - 1] : Infinity) >= this.post[j]) {
+//           ingest.push(j);
+//           indices.delete(j);
+//         }
+//       }
+// //console.log(`    ingest: ${ingest}`);
+//     };
+
+    const ingestFor = (j) => {
+      ingest.push(j);
+      indices.delete(j);
+    };
+
+    while (!ingest.length) {
+      let bot0 = table[half];
+      if (bot0 < 0n) {
+        table = table.map(x => -x);
+        bot0 = -bot0;
+      }
+      // TODO - it's not as simple as just checking a[i]/b[i]
+      //      - for ordinary linear  single-var homographs, it's actually
+      //        a/c and (a+b)/(c+d), since x=1..∞.  But for polynomials,
+      //        we could end up with all sorts of possibilities.
+      //      - quadratics are relatively easy with no other vars involved,
+      //        since we can just look at the vertex and figure out whether
+      //        it's at x>1, and look at the concavity.  But even then,
+      //        where is the max/min.  We'd basically need to find the root
+      //        of the derivative of the entire function?  Evaluate at 1, ∞,
+      //        and any roots.  We could store the derivate coefficients in
+      //        a precomputed table, but solving still seems intractable,
+      //        particularly since we don't actually have values for the other
+      //        variables.
+      //      - ultimately, if all we support is linear and quadratic, that's
+      //        probably fine.  But even quadratic mixed with anything else
+      //        seems impossible.  We could do the squares separately and then
+      //        feed them into a+b-c?
+      // From Gosper's manuscript, as long as there are no sign changes in the
+      // denominator, we *are* okay to just look at the pairwise quotients.
+      // We can try to ingest more terms if we *do* see sign changes in the
+      // denominator.  It gives up a little bit of eagerness, which could
+      // cause problems on very close calls?
+      const top0 = table[0];
+      if (top0 == 0n || bot0 <= 0n) {
+        ingest.push(...indices);
+        break;
+      }
+      const signs = new Array(half);
+      // if we differ from sign0 then find a dimension on which it differs.
+      // say 00- 01+ 10+ 11+ if we see 11+ we don't find such a dimen, but
+      // we already would have seen it before.
+      if (egested == 0) {
+        // record the sign of the top - want top to all be same sign
+        for (let i = 0; i < half && indices.size; i++) {
+          const top = table[i];
+          const bot = table[half + i];
+          const sign = signs[i] = bot > 0n ? top : -signs[0];
+          if (!sameSign(sign, signs[0])) {
+// console.log(`sign mismatch: ${i} vs 0`);
+            for (const j of indices) {
+              const mod = j ? this.post[j - 1] : half;
+              const post = this.post[j];
+// console.log(`  checking ${j}: post=${post} => ${signs[i-post]}`);
+// PROBLEM - sometimes it's i + post to get to the corresponding pair!!!
+        // consider 2 2 1
+        // 000 001 010 011 020 021 100 101 110 111 120 121 200 ...
+        // powers = 2, 2, 1
+        // pre    = 1, 3, 9
+        // post   = 6, 2, 1
+        // for j=2, check 1 vs 0, 3 vs 2, ...
+        // for j=1, check 2 vs 0, 3 vs 1, 4 vs 0, 5 vs 1, 8 vs 6, 9 vs 7, ...
+        //    -> delta = 2 (post[i]) only if i % 6 > 2
+        // for j=0, check 6 vs 0, 7 vs 1, 8 vs 2, ..., 11 vs 5, 12 vs 0, ...
+              if (i % mod >= post && !sameSign(sign, signs[i - post])) {
+                ingestFor(j);
+              }
+            }
+          }
+        }
+        // if (!bot0) signs[0] = 0n;
+      } else {
+        // want consistent quotient cmp some threshold
+        const shift = egested > 1 && indices.size ? 1n : 0n;
+        for (let i = 0; i < half; i++) {
+          const top = table[i];
+          const bot = table[half + i];
+          const sign = signs[i] = bot > 0n ? (top - (bot << shift)) : -signs[0];
+          if (!sameSign(sign, signs[0])) {
+// console.log(`sign mismatch: ${i} vs 0`);
+            for (const j of indices) {
+              const mod = j ? this.post[j - 1] : half;
+              const post = this.post[j];
+// console.log(`  checking ${j}: post=${post} => ${signs[i-post]}`);
+              if (i % mod >= post && !sameSign(sign, signs[i - post])) {
+                ingestFor(j);
+              }
+            }
+          }
         }
       }
-      egest.push(sign ? 1 : 0);
-      if (egested == 0) table = this.egestSign(sign, table);
-      if (egested == 1) table = this.egestRecip(sign, table);
-      if (egested >= 2) table = this.egest(sign, table);
-    }
-    // compare abs(a001/b001-a000/b000) a010/b010 
-    const quotient = table[0] / table[half];
-    // measure quotient for other indices by computing array offset
-    // ask for input corresponding to max
-    let biggestInput = 0;
-    let biggestDiff = 0;
-    let offset = 1;
-    for (let i = 0; i < this.powers.length; i++) {
-      const diff = Math.abs(table[i] / table[i + half] - quotient);
-      if (diff > biggestDiff) {
-        biggestDiff = diff;
-        biggestInput = i;
+
+if(LOG){
+  function split(x, s) {
+    return Array.from(range(s.length / x)).map(i => s.slice(i * x, i * x + x));
+  }
+  let s = signs.map(x => x > 0n ? '+' : x < 0n ? '-' : '0');
+// note - signs is only half-sized, but if we're still trying to get rid
+// of sign changes we need the full size...
+//console.dir(s);
+  for (let i = this.powers.length - 1; i >0/* -1*/; i--) {
+    // group substrings into nested arrays, join with ''. ' ', '\n', and '\n\n'
+    //group by post
+//console.log(`signs=${signs}`);
+    s = split(i >= 0 ? this.powers[i] + 1: 2, s);
+//console.dir(s);
+  }
+  function join(sep, ...rest) {
+    return arr => {
+//console.log(`join ${rest.length}:`);console.dir(arr);
+      return arr instanceof Array ? arr.map(join(...rest)).join(sep) : arr;
+    };
+  }
+  s = join(/*'\n\n',*/ '\n', ' ', '')(s);
+  console.log(s);
+}
+
+      // // See if any signs are different from the first one.
+      // for (let p = 0; j < this.powers.length; j++) {
+
+      //   // 000 001 010 011 020 021 100 101 110 111 120 121 200 ...
+      //   // powers = 2, 2, 1
+      //   // pre    = 1, 3, 9
+      //   // post   = 6, 2, 1
+
+      //   const pre = this.pre[p];
+      //   const post = this.post[p];
+      //   for (let i = 0; i < pre; i++) {
+      //     index = i * pre;
+      //     for (let k = 0; k < this.post[p]; k++) {
+
+      //     }
+      //   }
+      // }
+
+// how to pick ingestion?  look for whoever has the most sign divergence?
+
+
+        // for (let i = 0; i < half; i++) {
+        //   const top = table[i];
+        //   if (bot <= 0 || top0 >= 0 && top <= 0 || top0 <= 0 && top >= 0) {
+        //     ingestFor(i);
+        //     if (!indices.size) break;
+        //   }
+        // }
+
+      if (!ingest.length) {
+console.log(`  => egest ${signs[0]}`);
+        egest.push(Number(signs[0] > 0n));
+        if (egested == 0) table = this.egestSign(signs[0] > 0n, table);
+        if (egested == 1) table = this.egestRecip(signs[0] > 0n, table);
+        if (egested >= 2) table = this.egest(signs[0] > 0n, table);
+        egested++;
       }
     }
+    // // compare abs(a001/b001-a000/b000) a010/b010 
+    // const quotient = Number(table[0]) / Number(table[half]);
+    // // measure quotient for other indices by computing array offset
+    // // ask for input corresponding to max
+    // let biggestInput = 0;
+    // let biggestDiff = 0;
+    // let offset = 1;
+    // for (let i = 0; i < this.powers.length; i++) {
+    //   const diff = Math.abs(Number(table[i]) / Number(table[i + half]) - quotient);
+    //   if (diff > biggestDiff) {
+    //     biggestDiff = diff;
+    //     biggestInput = i;
+    //   }
+    // }
+    return {ingest, egest, table};
   }
 
   static of(powers) {
@@ -751,447 +998,7 @@ function gcd(a, b) {
   return a ? a : b;
 }
 
-
-
-class Homograph {
-  constructor(a, b, c, d) {
-    this.a = BigInt(a);
-    this.b = BigInt(b);
-    this.c = BigInt(c);
-    this.d = BigInt(d);
-    this.ingested = 0;
-    this.egested = 0;
-  }
-
-  /** @param {number|bigint|boolean|null} term */
-  ingest(term) {
-    const index = this.ingested;
-
-    if (term == null) {
-      // Nothing more to ingest.  Depending on this.ingested we can fix x.
-      // But since we do our math based on a/c and (a+b)/(c+d), we want to
-      // set b=d=0 for a constant.
-      if (index == 0) {
-        // no terms: x == 0
-        [this.a, this.b, this.c, this.d] = [this.b, 0n, this.d, 0n];
-      } else {
-        // x == 1, so z = (a+b)/(c+d)
-        [this.a, this.b, this.c, this.d] =
-            [this.a + this.b, 0n, this.c + this.d, 0n];
-      } 
-      this.ingested = 2; // pass future ingestion checks
-      return;
-    }
-
-    if (index == 0) {
-      // sign bit
-      if (!term) {
-        this.a *= -1n;
-        this.c *= -1n;
-      }
-    } else if (index == 1) {
-      // exponent sign bit
-      if (!term) {
-        [this.a, this.b, this.c, this.d] = [this.b, this.a, this.d, this.c];
-      }
-    } else if (term) {
-      // normal divide-by-2 bit
-      if (!((this.b & 1n) || (this.d & 1n))) {
-        this.b >>= 1n;
-        this.d >>= 1n;
-      } else {
-        this.a <<= 1n;
-        this.c <<= 1n;
-      }
-    } else {
-      // normal reciprocate bit
-      [this.a, this.b, this.c, this.d] =
-          [this.a + this.b, this.a, this.c + this.d, this.c];
-    }
-    this.ingested++;
-  }
-
-  /** @return {?boolean} True if >= 2, false if < 2, null if uncertain. */
-  next() {
-    if (this.ingested < 2) throw new Error('next before ingestion');
-    if (this.c == 0n || this.c + this.d == 0n) return null;
-    const threshold = BigInt(Math.min(this.egested, 2));
-    const x = this.a - (this.c * threshold);
-    const y = x + this.b - (this.d * threshold);
-    if (x >= 0n && y >= 0n) return true;
-    if (x < 0n && y < 0n) return false;
-    return null;
-  }
-
-  /** @param {number|bigint|boolean} term */
-  egest(term) {
-    const index = this.egested;
-    if (index == 0) {
-      if (!term) {
-        this.a *= -1n;
-        this.b *= -1n;
-      }
-    } else if (index == 1) {
-      if (!term) {
-        [this.a, this.b, this.c, this.d] = [this.c, this.d, this.a, this.b];
-      }
-    } else if (term) {
-      if (!((this.a & 1n) || (this.b & 1n))) {
-        this.a >>= 1n;
-        this.b >>= 1n;
-      } else {
-        this.c <<= 1n;
-        this.d <<= 1n;
-      }
-    } else {
-      [this.a, this.b, this.c, this.d] =
-          [this.c, this.d, this.a - this.c, this.b - this.d];
-    }
-    this.egested++;
-  }
-
-  /** @return {?bigint} null if not yet certain. */
-  wholePart() {
-    if (this.ingested < 2) throw new Error('whole before ingestion');
-    if (this.c == 0n || this.c + this.d == 0n) return null;
-    const ac = this.a / this.c;
-    const bd = (this.a + this.b) / (this.c + this.d);
-    return ac == bd ? ac : null;
-  }
-
-  /**
-   * @param {bigint} digit
-   * @param {bigint} radix
-   */
-  egestDigit(digit, radix = 10n) {
-digit = BigInt(digit);
-radix = BigInt(radix);
-    this.a -= digit * this.c;
-    this.b -= digit * this.d;
-    if (this.c % radix == 0n && this.d % radix == 0n) {
-      this.c /= radix;
-      this.d /= radix;
-    } else {
-      this.a *= radix;
-      this.b *= radix;
-    }
-  }
-
-  negate() {
-    this.a *= -1n;
-    this.b *= -1n;
-  }
-
-  toString() {
-    return `(${this.a} ${this.b};${this.c} ${this.d}): ${this.a}/${this.c}..${this.a+this.b}/${this.c+this.d}`;
-  }
-
-  static ofFloat(num) {
-    const h = new Homograph(1, 0, 0, 1);
-    if (num > 0) {
-      h.ingest(1);
-    } else if (num < 0) {
-      h.ingest(0);
-      num *= -1;
-    } else {
-      h.ingest(null);
-      return h;
-    }
-    if (num > 1) {
-      h.ingest(1);
-    } else if (num < 1) {
-      h.ingest(0);
-      num = 1 / num;
-    } else {
-      h.ingest(null);
-      return h;
-    }
-    let terms = 0;
-    while (num != 1 && terms++ < 64) {
-      if (num >= 2) {
-//console.log(`num: ${num} => 1`);
-        num /= 2;
-        h.ingest(1);
-      } else {
-//console.log(`num: ${num} => 0`);
-        num = 1 / (num - 1);
-        h.ingest(0);
-      }
-    }
-    h.ingest(null)
-    return h;
-  }
-
-  static ofRat(num, denom) {
-    const h = new Homograph(0, num, 0, denom);
-    h.ingest(null);
-    return h;
-  }
-}
-
-
-
-class Bihomograph {
-  // z = (axy + bx + cy + d) / (exy + fx + gy + h)
-  constructor(a, b, c, d, e, f, g, h) {
-    this.a = BigInt(a);
-    this.b = BigInt(b);
-    this.c = BigInt(c);
-    this.d = BigInt(d);
-    this.e = BigInt(e);
-    this.f = BigInt(f);
-    this.g = BigInt(g);
-    this.h = BigInt(h);
-    this.ingested1 = 0;
-    this.ingested2 = 0;
-    this.egested = 0;
-  }
-  /** @param {number|bigint|boolean|null} term */
-  ingest1(term) {
-    const index = this.ingested1;
-
-    if (term == null) {
-      // Nothing more to ingest.  Depending on this.ingested we can fix x.
-      // But since we do our math based on a/e and (a+b)/(e+f), we want to
-      // set c=d=g=h=0 for a constant.
-      if (index == 0) {
-        // no terms: x == 0
-        [this.a, this.b, this.c, this.d, this.e, this.f, this.g, this.h] =
-            [this.c, this.d, 0n, 0n, this.g, this.h, 0n, 0n];
-      } else {
-        // x == 1, so z = (a+b)/(c+d)
-        [this.a, this.b, this.c, this.d, this.e, this.f, this.g, this.h] =
-            [this.a + this.c, this.b + this.d, 0n, 0n,
-             this.e + this.g, this.f + this.h, 0n, 0n];
-      } 
-      this.ingested1 = 2; // pass future ingestion checks
-      return;
-    }
-
-    if (index == 0) {
-      // sign bit
-      if (!term) {
-        this.a *= -1n;
-        this.b *= -1n;
-        this.e *= -1n;
-        this.f *= -1n;
-      }
-    } else if (index == 1) {
-      // exponent sign bit
-      if (!term) {
-        [this.a, this.b, this.c, this.d, this.e, this.f, this.g, this.h] =
-            [this.c, this.d, this.a, this.b, this.g, this.h, this.e, this.f];
-      }
-    } else if (term) {
-      // normal divide-by-2 bit
-      if (!((this.c & 1n) || (this.d & 1n) || (this.g & 1n) || (this.h & 1n))) {
-        this.c >>= 1n;
-        this.d >>= 1n;
-        this.g >>= 1n;
-        this.h >>= 1n;
-      } else {
-        this.a <<= 1n;
-        this.b <<= 1n;
-        this.e <<= 1n;
-        this.f <<= 1n;
-      }
-    } else {
-      // normal reciprocate bit
-      [this.a, this.b, this.c, this.d, this.e, this.f, this.g, this.h] =
-          [this.a + this.c, this.b + this.d, this.a, this.b,
-           this.e + this.g, this.f + this.h, this.e, this.f];
-    }
-    this.ingested1++;
-  }
-
-  /** @param {number|bigint|boolean|null} term */
-  ingest2(term) {
-    const index = this.ingested2;
-
-    if (term == null) {
-      // Nothing more to ingest.  Depending on this.ingested we can fix x.
-      // But since we do our math based on a/e and (a+b)/(e+f), we want to
-      // set c=d=g=h=0 for a constant.
-      if (index == 0) {
-        // no terms: x == 0
-        [this.a, this.c, this.b, this.d, this.e, this.g, this.f, this.h] =
-            [this.b, this.d, 0n, 0n, this.f, this.h, 0n, 0n];
-      } else {
-        // x == 1, so z = (a+b)/(c+d)
-        [this.a, this.c, this.b, this.d, this.e, this.g, this.f, this.h] =
-            [this.a + this.b, this.c + this.d, 0n, 0n,
-             this.e + this.f, this.g + this.h, 0n, 0n];
-      } 
-      this.ingested2 = 2; // pass future ingestion checks
-      return;
-    }
-
-    if (index == 0) {
-      // sign bit
-      if (!term) {
-        this.a *= -1n;
-        this.c *= -1n;
-        this.e *= -1n;
-        this.g *= -1n;
-      }
-    } else if (index == 1) {
-      // exponent sign bit
-      if (!term) {
-        [this.a, this.c, this.b, this.d, this.e, this.g, this.f, this.h] =
-            [this.b, this.d, this.a, this.c, this.f, this.h, this.e, this.g];
-      }
-    } else if (term) {
-      // normal divide-by-2 bit
-      if (!((this.b & 1n) || (this.d & 1n) || (this.f & 1n) || (this.h & 1n))) {
-        this.b >>= 1n;
-        this.d >>= 1n;
-        this.f >>= 1n;
-        this.h >>= 1n;
-      } else {
-        this.a <<= 1n;
-        this.c <<= 1n;
-        this.e <<= 1n;
-        this.g <<= 1n;
-      }
-    } else {
-      // normal reciprocate bit
-      [this.a, this.c, this.b, this.d, this.e, this.g, this.f, this.h] =
-          [this.a + this.b, this.c + this.d, this.a, this.c,
-           this.e + this.f, this.g + this.h, this.e, this.g];
-    }
-    this.ingested2++;
-  }
-
-
-  /** @return {?boolean} True if >= 2, false if < 2, null if uncertain. */
-  next() {
-    if (this.ingested1 < 2) throw new Error('next before ingestion');
-    if (this.ingested2 < 2) throw new Error('next before ingestion');
-    if (this.e == 0n || this.e + this.f == 0n || this.e + this.g == 0n
-        || this.e + this.f + this.g + this.h) {
-      return null;
-    }
-    const threshold = BigInt(Math.min(this.egested, 2));
-
-// TODO ---- fix these for extra inputs...
-
-    const x = this.a - (this.c * threshold);
-    const y = x + this.b - (this.d * threshold);
-    if (x >= 0n && y >= 0n) return true;
-    if (x < 0n && y < 0n) return false;
-    return null;
-  }
-
-  /** @param {number|bigint|boolean} term */
-  egest(term) {
-    term = BigInt(term);
-    const index = this.egested;
-    if (index == 0) {
-      if (!term) {
-        this.a *= -1n;
-        this.b *= -1n;
-      }
-    } else if (index == 1) {
-      if (!term) {
-        [this.a, this.b, this.c, this.d] = [this.c, this.d, this.a, this.b];
-      }
-    } else if (term) {
-      if (!((this.a & 1n) || (this.b & 1n))) {
-        this.a >>= 1n;
-        this.b >>= 1n;
-      } else {
-        this.c <<= 1n;
-        this.d <<= 1n;
-      }
-    } else {
-      [this.a, this.b, this.c, this.d] =
-          [this.c, this.d, this.a - this.c, this.b - this.d];
-    }
-    this.egested++;
-  }
-
-  /** @return {?bigint} null if not yet certain. */
-  wholePart() {
-    if (this.ingested < 2) throw new Error('whole before ingestion');
-    if (this.c == 0n || this.c + this.d == 0n) return null;
-    const ac = this.a / this.c;
-    const bd = (this.a + this.b) / (this.c + this.d);
-    return ac == bd ? ac : null;
-  }
-
-  /**
-   * @param {bigint} digit
-   * @param {bigint} radix
-   */
-  egestDigit(digit, radix = 10n) {
-digit = BigInt(digit);
-radix = BigInt(radix);
-    this.a -= digit * this.c;
-    this.b -= digit * this.d;
-    if (this.c % radix == 0n && this.d % radix == 0n) {
-      this.c /= radix;
-      this.d /= radix;
-    } else {
-      this.a *= radix;
-      this.b *= radix;
-    }
-  }
-
-  negate() {
-    this.a *= -1n;
-    this.b *= -1n;
-  }
-
-  toString() {
-    return `(${this.a} ${this.b};${this.c} ${this.d}): ${this.a}/${this.c}..${this.a+this.b}/${this.c+this.d}`;
-  }
-
-  static ofFloat(num) {
-    const h = new Homograph(1, 0, 0, 1);
-    if (num > 0) {
-      h.ingest(1);
-    } else if (num < 0) {
-      h.ingest(0);
-      num *= -1;
-    } else {
-      h.ingest(null);
-      return h;
-    }
-    if (num > 1) {
-      h.ingest(1);
-    } else if (num < 1) {
-      h.ingest(0);
-      num = 1 / num;
-    } else {
-      h.ingest(null);
-      return h;
-    }
-    let terms = 0;
-    while (num != 1 && terms++ < 64) {
-      if (num >= 2) {
-//console.log(`num: ${num} => 1`);
-        num /= 2;
-        h.ingest(1);
-      } else {
-//console.log(`num: ${num} => 0`);
-        num = 1 / (num - 1);
-        h.ingest(0);
-      }
-    }
-    h.ingest(null)
-    return h;
-  }
-
-  static ofRat(num, denom) {
-    const h = new Homograph(0, num, 0, denom);
-    h.ingest(null);
-    return h;
-  }
-}
-
-
-
-module.exports = {CL, Homograph, Bihomograph};
+module.exports = {CL, CoefficientsTable};
 
 // for (const row of pascalTriangle(64)) {
 //   console.log(row.map(x=>x%2n?'#':' ').join(''));
@@ -1245,24 +1052,221 @@ module.exports = {CL, Homograph, Bihomograph};
 // }
 // console.log(s+digits.join(''));
 
-const pi = ofNonstandardCf(function*(){
-  let a = 1;
-  let b = 1;
-  while (true) {
-    yield a;
-    a += 2;
-    yield b;
-    b += a;
-  }
-}(), [0, 4, 1, 0]);
-console.log(pi.toString(10, 1000));
+// const pi = CL.fromNonstandardContinuedFraction(function*(){
+//   let a = 1;
+//   let b = 1;
+//   while (true) {
+//     yield a;
+//     a += 2;
+//     yield b;
+//     b += a;
+//   }
+// }(), [0, 4, 1, 0]);
+// console.log(pi.toString(10, 1000));
 
-const e = ofNonstandardCf(function*(){
-  yield 2;
-  let a = 2;
-  while (true) {
-    yield * [1, 1, 1, a, 1, 1];
-    a += 2;
-  }
-}());
-console.log(e.toString(10, 1000));
+// const e = CL.fromNonstandardContinuedFraction(function*(){
+//   yield 2;
+//   let a = 2;
+//   while (true) {
+//     yield * [1, 1, 1, a, 1, 1];
+//     a += 2;
+//   }
+// }());
+// console.log(e.toString(10, 1000));
+
+const t = new CoefficientsTable([2, 2, 1]);
+let x = t.buildTable([[2, 0, 0, 1], [0, 2, 0, -1], [0, 0, 1, 1]], [[0, 0, 0, 1]]);
+
+// TODO - hook up actual infinite repeating numbers here?
+//  e.g. (1+sqrt(3))/2 = (01)..., or (011) or (010)
+//   - this should lead to more realistic scenarios
+//   - do we ever request ingestion of only a single input?!?
+// TODO - improve ingest request logic to only look at difference in
+//        sign due to the term, rather than all terms in negative coefficient
+//      - i.e. (11- 10+ 01- 00+ => should only request index 1, not 0)
+
+const a = function*(){
+  yield 1; yield 0;
+  while (true) { yield 0; yield 1; }
+}();
+const b = function*(){
+  yield 1; yield 0;
+  while (true) { yield 0; yield 1; yield 1; }
+}();
+const c = function*(){
+  yield 0; yield 0;
+  while (true) { yield 1; yield 0; yield 1; yield 1; yield 0; }
+}();
+
+
+//console.log(t.next(0, x));
+x = t.ingestSign(0, a.next().value, x);
+x = t.ingestSign(1, b.next().value, x);
+x = t.ingestSign(2, c.next().value, x);
+//console.log(t.next(0, x));
+x = t.ingestRecip(0, a.next().value, x);
+x = t.ingestRecip(1, b.next().value, x);
+x = t.ingestRecip(2, c.next().value, x);
+//console.log(t.next(0, x));
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+//console.log(t.next(0, x));
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+//console.log(t.next(0, x));
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+//console.log(t.next(0, x));
+x = t.ingest(2, c.next().value, x);
+//console.log(t.next(0, x));
+x = t.ingest(2, c.next().value, x);
+//console.log(t.next(0, x));
+x = t.ingest(2, c.next().value, x);
+//console.log(t.next(0, x));
+x = t.ingest(2, c.next().value, x);
+//console.log(t.next(0, x));
+//LOG=true;
+x = t.ingest(1, b.next().value, x);
+//console.log(t.next(0, x));
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(0, a.next().value, x);
+
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+x = t.ingest(2, c.next().value, x);
+x = t.ingest(0, a.next().value, x);
+x = t.ingest(1, b.next().value, x);
+
+
+// x = t.ingest(1, 1, x);
+// x = t.ingest(2, 1, x);
+// console.log(t.next(0, x));
+// x = t.ingest(0, 1, x);
+// x = t.ingest(1, 0, x);
+// x = t.ingest(2, 1, x);
+// console.log(t.next(0, x));
+// x = t.ingest(0, 0, x);
+// x = t.ingest(1, 0, x);
+// x = t.ingest(2, 0, x);
+// console.log(t.next(0, x));
+// x = t.ingest(0, 0, x);
+// x = t.ingest(1, 1, x);
+// x = t.ingest(2, 0, x);
+// console.log(t.next(0, x));
+// x = t.egestSign(0, x);
+// x = t.egestRecip(1, x);
+// x = t.egest(1, x);
+// x = t.ingest(0, 0, x);
+// x = t.ingest(1, 1, x);
+// x = t.ingest(2, 0, x);
+// console.log(t.next(4, x));
+// x = t.egest(1, x);
+// x = t.egest(1, x);
+// x = t.ingest(0, 0, x);
+// x = t.ingest(1, 1, x);
+// x = t.ingest(2, 0, x);
+// console.log(t.next(4, x));
+// x = t.egest(1, x);
+// x = t.ingest(0, 0, x);
+// x = t.ingest(1, 1, x);
+// x = t.ingest(2, 0, x);
+
+
+//console.log(t.next(0, x));
+
+let {ingest, egest} = t.next(0, x);
+console.log(`EGEST ${egest} WANT ${ingest}`);
